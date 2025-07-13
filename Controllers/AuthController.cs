@@ -1,45 +1,68 @@
 
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
+using SampleJwtApi.Data;
+using SampleJwtApi.Models;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using Microsoft.EntityFrameworkCore;
 
-namespace SampleJwtApi.Controllers;
-
-[ApiController]
-[Route("[controller]")]
-public class AuthController : ControllerBase
+namespace SampleJwtApi.Controllers
 {
-    private readonly IConfiguration _configuration;
-
-    public AuthController(IConfiguration configuration)
+    public class LoginModel
     {
-        _configuration = configuration;
+        public string Username { get; set; }
+        public string Password { get; set; }
     }
 
-    [HttpPost("login")]
-    public IActionResult Login([FromBody] LoginModel user)
+    [ApiController]
+    [Route("[controller]")]
+    public class AuthController : ControllerBase
     {
-        if (user.Username == "admin" && user.Password == "password")
+        private readonly IConfiguration _configuration;
+        private readonly AuthDbContext _dbContext;
+
+        public AuthController(IConfiguration configuration, AuthDbContext dbContext)
         {
-            var claims = new[]
+            _configuration = configuration;
+            _dbContext = dbContext;
+        }
+
+        [HttpPost("login")]
+        public IActionResult Login([FromBody] LoginModel user)
+        {
+            var dbUser = _dbContext.Users
+                .Include(u => u.Roles)
+                    .ThenInclude(ur => ur.Role)
+                .Include(u => u.Claims)
+                .FirstOrDefault(u => u.Username == user.Username && u.Password == user.Password);
+
+            if (dbUser == null)
+                return Unauthorized();
+
+            var claims = new List<Claim>
             {
-                new Claim(ClaimTypes.Name, user.Username),
-                new Claim(ClaimTypes.Role, "Admin")
+                new Claim(ClaimTypes.Name, dbUser.Username)
             };
 
-            var secretKey = _configuration["JwtSettings:SecretKey"];
-            var issuer = _configuration["JwtSettings:Issuer"];
-            var audience = _configuration["JwtSettings:Audience"];
+            foreach (var role in dbUser.Roles)
+            {
+                claims.Add(new Claim(ClaimTypes.Role, role.Role.Name));
+            }
 
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
+            foreach (var claim in dbUser.Claims)
+            {
+                claims.Add(new Claim(claim.ClaimType, claim.ClaimValue));
+            }
+
+            var jwtSettings = _configuration.GetSection("JwtSettings");
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["SecretKey"]));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
             var token = new JwtSecurityToken(
-                issuer: issuer,
-                audience: audience,
+                issuer: jwtSettings["Issuer"],
+                audience: jwtSettings["Audience"],
                 claims: claims,
                 expires: DateTime.Now.AddHours(1),
                 signingCredentials: creds
@@ -50,20 +73,5 @@ public class AuthController : ControllerBase
                 token = new JwtSecurityTokenHandler().WriteToken(token)
             });
         }
-
-        return Unauthorized();
     }
-
-    [Authorize]
-    [HttpGet("secure")]
-    public IActionResult SecureEndpoint()
-    {
-        return Ok("You accessed a protected endpoint!");
-    }
-}
-
-public class LoginModel
-{
-    public string Username { get; set; }
-    public string Password { get; set; }
 }

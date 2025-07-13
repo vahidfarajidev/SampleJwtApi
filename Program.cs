@@ -1,6 +1,8 @@
 
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using SampleJwtApi.Data;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -13,6 +15,10 @@ var secretKey = jwtSettings.GetValue<string>("SecretKey");
 
 // Register services for controllers and Swagger
 builder.Services.AddControllers();
+
+// Register EF Core DbContext with SQL Server
+builder.Services.AddDbContext<AuthDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 // Swagger:begin
 // Configure Swagger for API documentation and JWT support
@@ -64,7 +70,14 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
-builder.Services.AddAuthorization(); // Adds support for role-based or policy-based access control
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("MustBeAdmin", policy =>
+        policy.RequireRole("Admin"));
+
+    options.AddPolicy("MustBeManager", policy =>
+        policy.RequireClaim("Department", "HR", "Finance"));
+}); // Adds support for role-based or policy-based access control
 
 var app = builder.Build();
 
